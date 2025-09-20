@@ -1,4 +1,4 @@
 using Meshless
 
-# include("rae2822/graph.jl")
+include("rae2822/graph.jl")
 include("linear_advection/run_case.jl")
