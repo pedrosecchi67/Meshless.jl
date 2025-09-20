@@ -160,8 +160,8 @@ We may also convert each partition to a given array backend (e. g. CUDA.jl) to r
 using CUDA
 
 domain(u;
-    convert_to_backend = x -> CuArray(x),
-    convert_from_backend = x -> Array(x)) do part, u
+    conv_to_backend = x -> CuArray(x),
+    conv_from_backend = x -> Array(x)) do part, u
     # run calculations
 end
 ```
