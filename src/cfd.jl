@@ -290,7 +290,7 @@ module CFD
             end
 
             push!(
-                fluxes, - mat2block(F, bsize)
+                fluxes, mat2block(F, bsize)
             )
         end
 
