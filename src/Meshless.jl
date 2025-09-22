@@ -32,7 +32,7 @@ module Meshless
         vtk_grid, vtk_save,
         Graph, BoundaryLayer,
         Domain, Partition,
-        Interpolator, Surface,
+        Interpolator, Surface, surface_integral,
         impose_bc!,
         artificial_dissipation, JST_sensor,
         timescale, smoothing, 
