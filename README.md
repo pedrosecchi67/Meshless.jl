@@ -327,3 +327,22 @@ intp = Interpolator(domain, X)
 
 u_at_X = intp(u)
 ```
+
+## Linear system solution
+
+A minimalist module for GMRES/Jacobian-Free Newton-Krylov solutions is provided.
+
+Example:
+
+```julia
+using Meshless: GMRES
+
+f = x -> begin
+    # any function with any array input/output type
+end
+
+A, b = GMRES.Linearize(f, x)
+
+n_iter = 10
+dx, final_residual = GMRES.gmres(A, b, n_iter; preconditioner = x -> x) # no prec.
+```

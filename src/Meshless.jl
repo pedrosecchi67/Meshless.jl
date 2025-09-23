@@ -24,6 +24,9 @@ module Meshless
     include("cfd.jl")
     using .CFD
 
+    include("gmres.jl")
+    using .GMRES
+
     export Ball, Box, Line, Triangulation,
         Stereolitography, STLTree, Mesh, FixedMesh,
         point_in_polygon, mesh2json, json2mesh,
@@ -36,7 +39,7 @@ module Meshless
         impose_bc!,
         artificial_dissipation, JST_sensor,
         timescale, smoothing, 
-        CFD
+        CFD, GMRES
 
     include("poly_regressor.jl")
     using .PolyRegression
