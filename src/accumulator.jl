@@ -72,16 +72,20 @@ module ArrayAccumulator
 	If `Δ` is true, then the sum occurs over differences between the
 	fetched stencil values, and the current stencil point.
 	If `f` is provided, it is applied on the values to sum before adding them.
+
+	Different reduction operations can be specified using `op`.
 	"""
 	function (acc::Accumulator)(v::AbstractVector;
-			Δ::Bool = false, f = identity)
+			Δ::Bool = false, f = identity,
+			op = +)
 	    vnew = similar(v, eltype(v), acc.n_output)
 	
 	    vnew .= 0
 	    for (i, stencil, weights) in values(acc.stencils)
 	        if isnothing(weights)
 	            vnew[i] .= dropdims(
-	                sum(
+	                reduce(
+						op,
 	                    v[stencil];
 	                    dims = 1
 	                );
@@ -89,7 +93,8 @@ module ArrayAccumulator
 	            )
 	        else
 	            vnew[i] .= dropdims(
-	                sum(
+	                reduce(
+						op,
 	                    (
 							Δ ?
 							f(v[stencil] .- v[i]') :
@@ -115,10 +120,13 @@ module ArrayAccumulator
 	If `Δ` is true, then the sum occurs over differences between the
 	fetched stencil values, and the current stencil point.
 	If `f` is provided, it is applied on the values to sum before adding them.
+
+	Different reduction operations can be specified using `op`.
 	"""
 	(acc::Accumulator)(v::AbstractArray;
-			Δ::Bool = false, f = identity) = mapslices(
-	    vv -> acc(vv; Δ = Δ, f = f), v; dims = (acc.first_index ? 1 : ndims(v))
+			Δ::Bool = false, f = identity,
+			op = +) = mapslices(
+	    vv -> acc(vv; Δ = Δ, f = f, op = op), v; dims = (acc.first_index ? 1 : ndims(v))
 	)
 	
 end
