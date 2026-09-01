@@ -1,273 +1,185 @@
 module NNInterpolator
 
-    export Interpolator, KDTree
-
     using DocStringExtensions
 
     using LinearAlgebra
     using NearestNeighbors
 
-    """
-    $TYPEDFIELDS
+    export Interpolator, KDTree
 
-    Struct to hold an interpolator from a point cloud
+    include("accumulator.jl")
+    using .ArrayAccumulator
+
     """
-    struct Interpolator
-        n_outputs::Int32
-        fetch_to::AbstractVector{Int32}
-        fetch_from::AbstractVector{Int32}
-        interpolate_to::AbstractVector{Int32}
-        stencils::AbstractMatrix{Int32}
-        weights::AbstractMatrix{Float64}
-        first_index::Bool
+    Obtain linear interpolation weights
+    """
+    function linear_weights(
+        X::AbstractMatrix, 
+        indices::AbstractVector,
+        x::AbstractVector
+    )
+        Tf = eltype(X)
+        ϵ = eps(Tf)
+
+        dX = X[:, indices] .- x
+        
+        distances = sum(
+            dX .^ 2; dims = 1
+        ) |> vec |> x -> sqrt.(x) .+ ϵ
+
+        w = Tf(1.0) ./ distances
+        w = let A = [
+            dX' ones(Tf, size(dX, 2))
+        ]
+            pinv(A .* w)[end, :] .* w
+        end
+
+        mask = @. abs(w) > ϵ
+
+        (
+            w[mask], indices[mask]
+        )
+    end
+
+    """
+    Obtain IDW interpolation weights
+    """
+    function IDW_weights(
+        X::AbstractMatrix, 
+        indices::AbstractVector,
+        x::AbstractVector
+    )
+        Tf = eltype(X)
+        ϵ = eps(Tf)
+
+        dX = X[:, indices] .- x
+        
+        distances = sum(
+            dX .^ 2; dims = 1
+        ) |> vec |> x -> sqrt.(x) .+ ϵ
+
+        w = Tf(1.0) ./ distances
+        w ./= sum(w)
+
+        mask = @. abs(w) > sqrt(ϵ)
+
+        (
+            w[mask], indices[mask]
+        )
     end
 
     """
     $TYPEDSIGNATURES
 
-    Obtain interpolator based on a KDTree and matrix of evaluation points.
-    Uses linear interpolation (`linear = true`) or Sherman's interpolation (IDW).
+    Obtain interpolator struct.
 
-    If `first_index` is true, the first dimension is interpreted as the point index upon interpolation.
-    Otherwise, the last dimension is interpreted as the point index (default).
-    Note that, if `first_index` is true, then `Xc, X` will also be expected to have shape `(npts, ndims)`.
+    Uses first index of an array for point indexing if `first_index = true`
+        (def. false).
 
-    If `n_neighbors` is not given, it is set to `2 ^ ndims`.
+    Uses `k` closest points as stencils (def. `2^ndims`).
 
-    If the weight of a single point is such that `w > tolerance`, the interpolation is replaced
-    by a simple fetching of the point.
+    `bias` (a matrix) may be provided such that nearest neighbors queries are performed
+    for `Xc + bias`, such that the interpolation stencil is offset from the actual interpolation
+    point.
     """
-    function Interpolator(Xc::AbstractMatrix, X::AbstractMatrix, 
+    function Interpolator(
+        X::AbstractMatrix, Xc::AbstractMatrix,
         tree::Union{KDTree, Nothing} = nothing;
-        linear::Bool = true,
+        bias::Union{Nothing, AbstractMatrix} = nothing,
         first_index::Bool = false,
-        tolerance::Float64 = 1.0 - 1e-3,
-        n_neighbors::Int = 0)
-
+        linear::Bool = true,
+        k::Int = 0,
+    )
         if first_index
-            Xc = permutedims(Xc)
             X = permutedims(X)
+            Xc = permutedims(Xc)
+            if !isnothing(bias)
+                bias = permutedims(bias)
+            end
         end
 
-        n_outputs = size(X, 2)
-        nd = size(X, 1)
-        kneighs = (
-            n_neighbors == 0 ?
-            2 ^ nd :
-            n_neighbors
-        )
-
-        if n_outputs == 0
-            return Interpolator(
-                0, Int32[], Int32[], 
-                Int32[], 
-                Matrix{Int32}(undef, kneighs, 0), Matrix{Float64}(undef, kneighs, 0),
-                first_index
-            )
+        if k == 0
+            k = 2 ^ size(X, 1)
         end
 
         if isnothing(tree)
-            tree = KDTree(Xc)
+            tree = KDTree(X)
         end
 
-        stencils, dists = knn(tree, X, kneighs)
-        stencils = reduce(hcat, stencils)
-        dists = reduce(hcat, dists)
-
-        weights = similar(dists)
-
-        for (j, x) in enumerate(eachcol(X))
-            ds = @view dists[:, j]
-            inds = @view stencils[:, j]
-            cnts = @view Xc[:, inds]
-
-            w = let ϵ = eps(eltype(ds))
-                w = @. 1.0 / (ds + ϵ)
-            end
-
-            if linear
-                A = mapreduce(
-                    c -> [1.0 (c .- x)'],
-                    vcat,
-                    eachcol(cnts)
-                ) .* w
-
-                weights[:, j] .= pinv(A)[1, :] .* w
-            else
-                weights[:, j] .= (w ./ sum(w))
-            end
-        end
-
-        is_same_point = @. weights >= tolerance
-        # find if all other weigths are zero
-        for (w, isp) in zip(
-            eachcol(weights), eachcol(is_same_point)
-        )
-            if any(isp)
-                mw = maximum(w)
-                isp .*= (w == mw) # ensure only one fetching point per stencil
-            end
-        end
-
-        should_fetch = map(any, eachcol(is_same_point))
-        fetch_to = findall(should_fetch)
-        fetch_from = vec(stencils)[vec(is_same_point)]
-        @assert length(fetch_to) == length(fetch_from) "Coinciding mesh centers?"
-
-        interpolate_to = findall(
-            (@. !should_fetch)
+        get_weights = (
+            linear ?
+            (X, idxs, x) -> linear_weights(X, idxs, x) :
+            (X, idxs, x) -> IDW_weights(X, idxs, x)
         )
 
-        Interpolator(
-            n_outputs,
-            fetch_to, fetch_from,
-            interpolate_to, stencils[:, interpolate_to], weights[:, interpolate_to],
-            first_index
-        )
-    end
-
-    """
-    $TYPEDSIGNATURES
-
-    Evaluate interpolator
-    """
-    function (intp::Interpolator)(Q::AbstractVector)
-        Qnew = similar(Q, eltype(Q), intp.n_outputs)
-
-        if length(intp.fetch_to) > 0
-            Qnew[intp.fetch_to] .= Q[intp.fetch_from]
+        Xq = Xc
+        if !isnothing(bias)
+            Xq = Xq .+ bias
         end
 
-        if length(intp.interpolate_to) > 0
-            Qnew[intp.interpolate_to] .= dropdims(
-                sum(
-                    view(Q, intp.stencils) .* intp.weights;
-                    dims = 1
-                );
-                dims = 1
+        idxs, ws = let tups = map(
+            (x, xq) -> let idxs = knn(
+                tree, xq, k
+            )[1]
+                get_weights(X, idxs, x)
+            end,
+            eachcol(Xc), eachcol(Xq)
+        )
+            (
+                map(t -> t[2], tups),
+                map(t -> t[1], tups),
             )
         end
-        
-        Qnew
-    end
 
-    """
-    $TYPEDSIGNATURES
-
-    Interpolate multi-dimensional array.
-    The last dimension is assumed to refer to the cell index.
-
-    If `first_index` is true upon interpolator construction, 
-    the first dimension is interpreted as the point index upon interpolation.
-    Otherwise, the last dimension is interpreted as the point index (default).
-    """
-    (intp::Interpolator)(Q::AbstractArray) = mapslices(
-        intp, Q; dims = (intp.first_index ? 1 : ndims(Q))
-    )
-
-    """
-    $TYPEDSIGNATURES
-
-    Obtain a new interpolator which only produces the values
-    identified by indices in `i`.
-    """
-    function Base.getindex(intp::Interpolator, i)
-        mask = falses(intp.n_outputs)
-        mask[i] .= true
-
-        fetch_remains = mask[intp.fetch_to] |> findall
-        interpolate_remains = mask[intp.interpolate_to] |> findall
-
-        new_inds = cumsum(mask)
-
-        Interpolator(
-            length(i),
-            new_inds[intp.fetch_to[fetch_remains]],
-            intp.fetch_from[fetch_remains],
-            new_inds[intp.interpolate_to[interpolate_remains]],
-            intp.stencils[:, interpolate_remains], intp.weights[:, interpolate_remains],
-            intp.first_index
+        Accumulator(
+            idxs, ws;
+            first_index = first_index
         )
     end
 
     """
     $TYPEDSIGNATURES
 
-    Obtain domain from an interpolator (array of indices which influence the results)
+    Get domain for one or more interpolators.
+    Returns a vector of domain indices and a dictionary 
+    mapping previous indexes to indices in the domain.
     """
-    domain(intp::Interpolator) = unique(
-        [
-            intp.fetch_from; vec(intp.stencils)
-        ]
+    function domain(
+        intps::Accumulator...
     )
-
-    """
-    $TYPEDSIGNATURES
-
-    Convert a vector of indices in domain to a hashmap for re-indexing (see `filtered`)
-    """
-    function index_map(dom::AbstractVector)
-        d = Dict{Int32, Int32}()
-
-        i = 0
-        for k in dom 
-            if !haskey(d, k)
-                i += 1
-                d[k] = i
+        idxs = let idxs = Set{Int64}()
+            for intp in intps
+                for (_, stencil, _) in values(intp.stencils)
+                    for i in stencil
+                        push!(idxs, i)
+                    end
+                end
             end
+
+            idxs |> collect |> sort
         end
 
-        d
+        (
+            idxs,
+            Dict(
+                [k => i for (i, k) in enumerate(idxs)]
+            )
+        )
     end
 
     """
     $TYPEDSIGNATURES
 
-    Filter an interpolator to receive only the indices which are contained within its
-    domain. Example:
-
-    ```
-    dom = NNInterpolator.domain(intp)
-    intp_filter = NNInterpolator.filtered(intp, dom) # domain surmised if not provided
-
-    @assert intp(v) ≈ intp_filter(v[dom])
-    ```
-
-    May also be used with `index_map` to avoid re-creating a hashmap of indices every
-    time `filtered` is called for a different interpolator. Example:
-
-    ```
-    dom = [
-        NNInterpolator.domain(intp1);
-        NNInterpolator.domain(intp2)
-    ] |> unique
-
-    hmap = NNInterpolator.index_map(dom)
-
-    # this saves memory!
-    intp1 = NNInterpolator.filtered(intp1, hmap)
-    intp2 = NNInterpolator.filtered(intp2, hmap)
-    ```
+    Re-index interpolator to handle new domain
     """
-    function filtered(intp::Interpolator, 
-        dom::Union{Nothing, AbstractVector, AbstractDict} = nothing)
-        if isnothing(dom)
-            dom = domain(intp)
+    function re_index!(
+        intp::Accumulator, hmap::Dict{Int64, Int64}
+    )
+        for (_, stencil, _) in values(intp.stencils)
+            stencil .= map(
+                i -> hmap[i], stencil
+            )
         end
-
-        if dom isa AbstractVector
-            dom = index_map(dom)
-        end
-
-        Interpolator(
-            intp.n_outputs,
-            intp.fetch_to,
-            map(i -> dom[i], intp.fetch_from),
-            intp.interpolate_to,
-            map(i -> dom[i], intp.stencils),
-            intp.weights,
-            intp.first_index
-        )
     end
 
 end

@@ -9,14 +9,14 @@ module ArrayBackends
     """
     $TYPEDSIGNATURES
 
-    Convert array to given to backend
+    Convert array to given backend
     """
     to_backend(a::AbstractArray, converter) = converter(a)
 
     """
     $TYPEDSIGNATURES
 
-    Convert tuple to given to backend
+    Convert tuple to given backend
     """
     to_backend(a::Tuple, converter) = map(
         v -> to_backend(v, converter), a
@@ -25,13 +25,20 @@ module ArrayBackends
     """
     $TYPEDSIGNATURES
 
-    Convert dictionary to given to backend
+    Convert dictionary to given backend
     """
     to_backend(a::AbstractDict, converter) = Dict(
         [
             k => to_backend(v, converter) for (k, v) in pairs(a)
         ]...
     )
+
+    """
+    $TYPEDSIGNATURES
+
+    Convert range to given backend (do nothing)
+    """
+    to_backend(r::AbstractRange, converter) = r
 
     """
     $TYPEDSIGNATURES

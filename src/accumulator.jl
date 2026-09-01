@@ -2,7 +2,7 @@ module ArrayAccumulator
 
 	using DocStringExtensions
 
-  export Accumulator
+    export Accumulator
 	
 	"""
 	$TYPEDFIELDS
@@ -86,7 +86,7 @@ module ArrayAccumulator
 	            vnew[i] .= dropdims(
 	                reduce(
 						op,
-	                    v[stencil];
+	                    f(v[stencil]);
 	                    dims = 1
 	                );
 	                dims = 1
@@ -128,5 +128,64 @@ module ArrayAccumulator
 			op = +) = mapslices(
 	    vv -> acc(vv; Δ = Δ, f = f, op = op), v; dims = (acc.first_index ? 1 : ndims(v))
 	)
+
+    """
+    $TYPEDSIGNATURES
+
+    Decompose array accumulator back to list of lists format
+    """
+    function decompose(
+        acc::Accumulator
+    )
+        indices = Vector{AbstractVector{Int64}}(undef, acc.n_output)
+
+        has_weights = false
+        for (inds, stencils, weights) in values(acc.stencils)
+            for (k, i) in enumerate(inds)
+                indices[i] = stencils[:, k]
+            end
+
+            if !isnothing(weights)
+                has_weights = true
+            end
+        end
+
+        if !has_weights
+            return indices
+        end
+
+        weights = Vector{AbstractVector{Float64}}(undef, acc.n_output)
+        for (inds, _, ws) in values(acc.stencils)
+            for (k, i) in enumerate(inds)
+                weights[i] = ws[:, k]
+            end
+        end
+
+        (indices, weights)
+    end
+
+	"""
+	$TYPEDSIGNATURES
+
+	Change data types in indices and weights
+	"""
+	function change_data_types!(
+		acc::Accumulator, Ti::Type, Tf::Union{Type, Nothing} = nothing
+	)
+		for (k, (inds, stencils, weights)) in acc.stencils
+			acc.stencils[k] = (
+				Ti.(inds), Ti.(stencils),
+				(
+					isnothing(weights) ?
+					nothing :
+					(
+						isnothing(Tf) ?
+						weights :
+						Tf.(weights)
+					)
+				)
+			)
+		end
+	end
 	
 end

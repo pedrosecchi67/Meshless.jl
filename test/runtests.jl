@@ -1,7 +1,10 @@
-using Meshless
+using Distributed
+using ProgressBars
 
-#=
-include("rae2822/graph.jl")
-include("linear_advection/run_case.jl")
-=#
-include("dissipation/run_case.jl")
+workers = addprocs(3)
+
+@everywhere using Meshless
+using Meshless.Solver
+
+include("advection.jl")
+include("dissipation.jl")
