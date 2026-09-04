@@ -298,6 +298,7 @@ module Meshless
     Struct to define a domain.
     """
     struct Domain{Tf <: AbstractFloat, Ti <: Integer} <: AbstractDomain{Tf, Ti}
+        partition_index::Int
         face_accumulator::Accumulator
         points::AbstractMatrix{Tf}
         face_owners::AbstractVector{Ti}
@@ -332,6 +333,7 @@ module Meshless
         graph::Graph{Tf, Ti};
         tolerance::Real = 1f-7,
         verbose::Bool = false,
+        partition_index::Int = 0,
     ) where {Tf, Ti}
         points = graph.points |> permutedims |> copy
         verbose && println("Building domain from graph with $(size(points, 1)) points...")
@@ -415,6 +417,7 @@ module Meshless
         verbose && println("Done with domain construction.")
 
         Domain{Tf, Ti}(
+            partition_index,
             acc, points,
             face_owners, face_neighbors,
             face_normals, face_areas, face_distances,
@@ -800,7 +803,7 @@ module Meshless
             iworker = ipart -> _workers[ipart]
 
             # list batch of subgraphs for each process
-            batches = [Graph{Tf, Ti}[] for _ = 1:length(workers)]
+            batches = [Tuple{Int64, Graph{Tf, Ti}}[] for _ = 1:length(workers)]
             for ipart = 1:length(partitions)
                 subgraph, _, _ = partitions[ipart]
 
@@ -808,7 +811,7 @@ module Meshless
 
                 push!(
                     batches[ipid],
-                    subgraph
+                    (ipart, subgraph)
                 )
             end
 
@@ -817,7 +820,9 @@ module Meshless
             for (ipid, subgraphs) in enumerate(batches)
                 pid = workers[ipid]
                 future = @spawnat pid begin
-                    domains = Domain.(subgraphs)
+                    domains = map(
+                        sub -> Domain(sub[2]; partition_index = sub[1]), subgraphs
+                    )
                     if !lazy_backend
                         domains = map(
                             dom -> to_backend(dom, conv_to_backend),

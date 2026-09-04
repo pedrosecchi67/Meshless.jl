@@ -260,6 +260,26 @@ pdom = ParitionedDomain(
 
 Other data types often support function `obj = Meshless.to_backend(obj, conv_to_backend)`.
 
+To store intermediary values for computation at MPI workers, use:
+
+```julia
+using Meshless.stash!
+using Distributed
+
+pdom(u) do dom, u
+    id = myid()
+
+    # store values:
+    key = stash!(id, u)
+
+    # recover at next evaluation:
+    u = unstash!(id, key)
+
+    # free memory:
+    clean_stash!(id, key)
+end
+```
+
 ## CFD utilities
 
 Check out the docstrings for the following functions and structs:
