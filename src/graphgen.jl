@@ -256,7 +256,7 @@ module GraphGen
                 itr = ProgressBar(itr)
             end
 
-            for i in itr
+            @threads for i in itr
                 x = bpoints[:, i]
                 p = BlockMesher.projection(dfield, x, radii[bindices[i]] * (cutoff_ratio + 2.5f0))
                 d = norm(p .- x)
