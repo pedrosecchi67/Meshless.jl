@@ -15,6 +15,8 @@ module GraphGen
 
     using ProgressBars
 
+    using Base.Threads: @threads, ReentrantLock, lock
+
     export Stereolitography, refine_to_length, merge_points,
         Box, Ball, Line, DistanceField,
         feature_regions,
@@ -52,9 +54,14 @@ module GraphGen
 
         verbose && println("Flooding $(size(centers, 2)) cells...")
 
+        lck = ReentrantLock()
         while length(front) > 0
             visit! = (new_front, i) -> begin
-                if mask[i]
+                m = false
+                lock(lck) do 
+                    m = mask[i]
+                end
+                if m
                     return
                 end
 
@@ -76,15 +83,19 @@ module GraphGen
                     boundary[i] = true
                 end
 
-                mask[i] = true
-                for neigh in inrange(tree, pt, R * 3.1f0) # add non-visited nearby points to front
-                    push!(new_front, neigh)
+                lock(lck) do
+                    mask[i] = true
+
+                    for neigh in inrange(tree, pt, R * 3.1f0) # add non-visited nearby points to front
+                        push!(new_front, neigh)
+                    end
                 end
             end
 
             new_front = Set{Int64}()
 
-            for i in front
+            front = collect(front)
+            @threads for i in front
                 visit!(new_front, i)
             end
 
